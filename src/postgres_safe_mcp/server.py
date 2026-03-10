@@ -100,9 +100,22 @@ async def query(
 ) -> str:
     """Execute a SQL query with automatic PII redaction.
 
-    Results are automatically masked based on detected PII types.
-    Use reveal_columns or reveal_types to selectively unmask data
-    when you need to see real values to solve a problem.
+    IMPORTANT: All PII columns are masked by default. You should keep data
+    masked unless the user's request CANNOT be answered without seeing the
+    real values. Follow these guidelines:
+
+    KEEP MASKED (do not use reveal_columns/reveal_types):
+    - Browsing or exploring data ("show me the users table")
+    - Aggregate queries ("how many users signed up last month?")
+    - Pattern analysis ("what's the distribution of email domains?")
+    - Debugging non-PII issues ("why is this record's status wrong?")
+
+    REVEAL only when the user explicitly asks to see PII values:
+    - "What is John's email address?" → reveal_columns: ["email"]
+    - "Show me the full name of user 42" → reveal_columns: ["first_name", "last_name"]
+    - "I need to see the real phone numbers" → reveal_types: ["PHONE_NUMBER"]
+
+    When in doubt, keep it masked. The user can always ask you to reveal.
 
     Write operations (INSERT, UPDATE, DELETE, etc.) are only allowed
     when the server is configured with read_only: false.
