@@ -61,13 +61,19 @@ def create_server(config: Config) -> FastMCP:
 
 
 async def _ensure_initialized() -> None:
-    """Connect to DB and scan schema on first use."""
+    """Connect to DB and load schema on first use.
+
+    PII scanning is NOT done eagerly — with large schemas (hundreds of tables),
+    scanning every column upfront would take minutes. Instead, columns are
+    classified lazily when they first appear in query results.
+    """
     if _schema_mgr.tables:
         return
     await _db.connect()
     await _schema_mgr.load_schema(_db, _config.allowed_schemas)
+    # Apply heuristic-only detection to schema column names (no sampling, instant)
     if _config.auto_detect:
-        await _schema_mgr.scan_pii(_db, _detector, _config.sample_size)
+        _schema_mgr.apply_heuristic_detection(_detector)
 
 
 @mcp_server.tool()

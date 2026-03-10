@@ -37,22 +37,40 @@ class SchemaManager:
     def tables(self) -> dict[str, TableInfo]:
         return self._tables
 
-    async def scan_pii(
+    def apply_heuristic_detection(self, detector: PiiDetector) -> None:
+        """Run fast heuristic-only PII detection on all column names.
+
+        This is instant (no DB queries) and catches most PII columns
+        by name pattern alone. Presidio sample-based detection happens
+        lazily on first query if needed.
+        """
+        for table_key, table_info in self._tables.items():
+            for col in table_info.columns:
+                cache_key = f"{table_key}.{col.column_name}"
+                if cache_key not in detector._cache:
+                    info = detector.detect_column_pii(col.column_name)
+                    if info is not None:
+                        detector._cache[cache_key] = info
+
+    async def scan_table_pii(
         self,
+        table_key: str,
         db: Database,
         detector: PiiDetector,
         sample_size: int = 100,
     ) -> None:
-        """Run PII detection on all tables using sampled data."""
-        for table_key, table_info in self._tables.items():
-            col_names = [c.column_name for c in table_info.columns]
+        """Run full PII detection (with sampling) on a single table."""
+        table_info = self._tables.get(table_key)
+        if not table_info:
+            return
+        col_names = [c.column_name for c in table_info.columns]
 
-            async def sampler(col: str, _t=table_info) -> list[str]:
-                return await db.sample_column(
-                    _t.name, col, schema=_t.schema, limit=sample_size
-                )
+        async def sampler(col: str, _t=table_info) -> list[str]:
+            return await db.sample_column(
+                _t.name, col, schema=_t.schema, limit=sample_size
+            )
 
-            await detector.scan_table(table_key, col_names, sampler)
+        await detector.scan_table(table_key, col_names, sampler)
 
     def get_pii_report(
         self,
