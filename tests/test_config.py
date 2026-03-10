@@ -15,6 +15,7 @@ class TestConfigDefaults:
         assert config.default_masking_style == "partial"
         assert config.sample_size == 100
         assert config.auto_detect is True
+        assert config.read_only is True
         assert config.allowed_schemas == ["public"]
         assert config.max_rows == 1000
         assert config.column_rules == []
@@ -107,3 +108,25 @@ class TestLoadConfig:
             config = load_config(config_path=f.name)
         os.unlink(f.name)
         assert config.default_masking_style == "partial"
+
+    def test_read_only_from_yaml(self):
+        data = {"read_only": False}
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            yaml.dump(data, f)
+            f.flush()
+            config = load_config(config_path=f.name)
+        os.unlink(f.name)
+        assert config.read_only is False
+
+    def test_read_only_cli_overrides_yaml(self):
+        data = {"read_only": False}
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            yaml.dump(data, f)
+            f.flush()
+            config = load_config(config_path=f.name, read_only=True)
+        os.unlink(f.name)
+        assert config.read_only is True
+
+    def test_read_write_cli_flag(self):
+        config = load_config(read_only=False)
+        assert config.read_only is False

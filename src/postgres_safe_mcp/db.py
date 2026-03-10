@@ -50,20 +50,32 @@ class Database:
             raise RuntimeError("Database not connected. Call connect() first.")
         return self._conn
 
-    async def execute_readonly(
+    async def execute_query(
         self,
         sql: str,
         params: dict | None = None,
         max_rows: int = 1000,
-    ) -> tuple[list[str], list[list]]:
-        """Execute a read-only query. Returns (column_names, rows)."""
+        read_only: bool = True,
+    ) -> tuple[list[str], list[list], int | None]:
+        """Execute a query. Returns (column_names, rows, rowcount).
+
+        When read_only=True, the transaction is set to READ ONLY.
+        For write queries, rowcount is the number of affected rows.
+        For SELECT queries, rows contain the result set.
+        """
         conn = self._ensure_connected()
         async with conn.transaction():
-            await conn.execute("SET TRANSACTION READ ONLY")
+            if read_only:
+                await conn.execute("SET TRANSACTION READ ONLY")
             cursor = await conn.execute(sql, params)
-            columns = [desc.name for desc in cursor.description or []]
-            rows = await cursor.fetchmany(max_rows)
-        return columns, [list(row) for row in rows]
+            # SELECT-like queries have a description
+            if cursor.description:
+                columns = [desc.name for desc in cursor.description]
+                rows = await cursor.fetchmany(max_rows)
+                return columns, [list(row) for row in rows], None
+            else:
+                # Write queries (INSERT/UPDATE/DELETE) — return rowcount
+                return [], [], cursor.rowcount
 
     async def execute_explain(self, sql: str) -> str:
         """Run EXPLAIN on a query and return the plan text."""

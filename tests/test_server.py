@@ -5,7 +5,8 @@ import re
 from postgres_safe_mcp.server import WRITE_PATTERN
 
 
-class TestWritePatternValidation:
+class TestWritePatternDetection:
+    """Tests that WRITE_PATTERN correctly identifies write vs read queries."""
     def test_rejects_insert(self):
         assert WRITE_PATTERN.search("INSERT INTO users VALUES (1)")
 
@@ -52,3 +53,20 @@ class TestWritePatternValidation:
     def test_case_insensitive(self):
         assert WRITE_PATTERN.search("insert into users values (1)")
         assert WRITE_PATTERN.search("Insert Into users Values (1)")
+
+    def test_detects_write_for_all_dangerous_keywords(self):
+        """Ensure all dangerous SQL keywords are detected."""
+        dangerous = [
+            "INSERT", "UPDATE", "DELETE", "DROP", "ALTER",
+            "TRUNCATE", "CREATE", "GRANT", "REVOKE", "COPY",
+        ]
+        for keyword in dangerous:
+            assert WRITE_PATTERN.search(f"{keyword} something"), (
+                f"Failed to detect: {keyword}"
+            )
+
+    def test_allows_column_names_containing_keywords(self):
+        """Words like 'updated_at', 'created_at', 'deleted' should not trigger."""
+        assert WRITE_PATTERN.search("SELECT updated_at FROM users") is None
+        assert WRITE_PATTERN.search("SELECT created_at FROM users") is None
+        assert WRITE_PATTERN.search("SELECT deleted FROM users") is None

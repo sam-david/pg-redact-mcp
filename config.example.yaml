@@ -1,6 +1,7 @@
 connection_string: "postgresql://user:pass@localhost:5432/mydb"
 default_masking_style: "partial"    # partial | full | pseudonymize
 auto_detect: true
+read_only: true                     # false to allow INSERT/UPDATE/DELETE
 sample_size: 100
 max_rows: 1000
 allowed_schemas:

@@ -27,6 +27,7 @@ class Config:
     default_masking_style: str = "partial"
     sample_size: int = 100
     auto_detect: bool = True
+    read_only: bool = True
     column_rules: list[ColumnMaskingRule] = field(default_factory=list)
     allowed_schemas: list[str] = field(default_factory=lambda: ["public"])
     max_rows: int = 1000
@@ -42,6 +43,7 @@ class Config:
 def load_config(
     config_path: str | None = None,
     connection_string: str | None = None,
+    read_only: bool | None = None,
 ) -> Config:
     """Load config with precedence: CLI args > env vars > config file > defaults."""
     config = Config()
@@ -59,9 +61,11 @@ def load_config(
     if env_conn:
         config.connection_string = env_conn
 
-    # CLI arg overrides everything
+    # CLI args override everything
     if connection_string:
         config.connection_string = connection_string
+    if read_only is not None:
+        config.read_only = read_only
 
     return config
 
@@ -76,6 +80,8 @@ def _apply_yaml(config: Config, data: dict) -> None:
         config.sample_size = data["sample_size"]
     if "auto_detect" in data:
         config.auto_detect = data["auto_detect"]
+    if "read_only" in data:
+        config.read_only = data["read_only"]
     if "allowed_schemas" in data:
         config.allowed_schemas = data["allowed_schemas"]
     if "max_rows" in data:

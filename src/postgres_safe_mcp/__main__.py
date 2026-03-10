@@ -34,13 +34,34 @@ def main() -> None:
         "--config",
         help="Path to YAML config file",
     )
+    read_only_group = parser.add_mutually_exclusive_group()
+    read_only_group.add_argument(
+        "--read-only",
+        action="store_true",
+        default=None,
+        help="Only allow SELECT queries (default)",
+    )
+    read_only_group.add_argument(
+        "--read-write",
+        action="store_true",
+        default=None,
+        help="Allow INSERT, UPDATE, DELETE, and other write queries",
+    )
     args = parser.parse_args()
 
     ensure_spacy_model()
 
+    # Determine read_only override from CLI flags
+    read_only_override = None
+    if args.read_only:
+        read_only_override = True
+    elif args.read_write:
+        read_only_override = False
+
     config = load_config(
         config_path=args.config,
         connection_string=args.connection_string,
+        read_only=read_only_override,
     )
 
     if not config.connection_string:

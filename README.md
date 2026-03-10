@@ -91,17 +91,20 @@ uv run python -m postgres_safe_mcp --config config.yaml
 |---|---|
 | `-c`, `--connection-string` | PostgreSQL connection string (highest priority) |
 | `--config` | Path to YAML config file |
+| `--read-only` | Only allow SELECT queries (default) |
+| `--read-write` | Allow INSERT, UPDATE, DELETE, and other write queries |
 
 Connection string precedence: CLI arg > `DATABASE_URL` env var > config file.
+Read-only precedence: CLI flag > config file > default (true).
 
 ## MCP Tools
 
 ### `query`
-Execute a read-only SQL query with automatic PII redaction.
+Execute a SQL query with automatic PII redaction. Write queries (INSERT, UPDATE, DELETE) are blocked in read-only mode (default) and allowed when configured with `read_only: false`.
 
 | Parameter | Type | Description |
 |---|---|---|
-| `sql` | string | SQL query (read-only, SELECT only) |
+| `sql` | string | SQL query (write queries require read-only mode to be disabled) |
 | `params` | dict | Query parameters for parameterized queries |
 | `reveal_columns` | list[string] | Column names to show unmasked |
 | `reveal_types` | list[string] | PII entity types to show unmasked (e.g. `EMAIL_ADDRESS`, `PERSON`) |
@@ -138,6 +141,7 @@ See [`config.example.yaml`](config.example.yaml) for a full example.
 connection_string: "postgresql://user:pass@localhost:5432/mydb"
 default_masking_style: "partial"
 auto_detect: true
+read_only: true                     # false to allow INSERT/UPDATE/DELETE
 sample_size: 100
 max_rows: 1000
 allowed_schemas:

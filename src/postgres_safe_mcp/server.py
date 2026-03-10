@@ -72,7 +72,7 @@ async def _ensure_initialized() -> None:
 
 @mcp_server.tool()
 async def query(
-    sql: Annotated[str, Field(description="SQL query to execute (read-only)")],
+    sql: Annotated[str, Field(description="SQL query to execute")],
     params: Annotated[
         dict | None, Field(description="Query parameters for parameterized queries")
     ] = None,
@@ -92,21 +92,33 @@ async def query(
         ),
     ] = None,
 ) -> str:
-    """Execute a read-only SQL query with automatic PII redaction.
+    """Execute a SQL query with automatic PII redaction.
 
     Results are automatically masked based on detected PII types.
     Use reveal_columns or reveal_types to selectively unmask data
     when you need to see real values to solve a problem.
+
+    Write operations (INSERT, UPDATE, DELETE, etc.) are only allowed
+    when the server is configured with read_only: false.
     """
-    # Validate read-only
-    if WRITE_PATTERN.search(sql):
-        return "Error: Only read-only queries (SELECT) are allowed."
+    is_write = bool(WRITE_PATTERN.search(sql))
+
+    if is_write and _config.read_only:
+        return (
+            "Error: Write queries are not allowed. "
+            "Server is in read-only mode (read_only: true). "
+            "Set read_only: false in config to allow writes."
+        )
 
     await _ensure_initialized()
 
-    columns, rows = await _db.execute_readonly(
-        sql, params, max_rows=_config.max_rows
+    columns, rows, rowcount = await _db.execute_query(
+        sql, params, max_rows=_config.max_rows, read_only=_config.read_only
     )
+
+    # Write query — no result set, just rowcount
+    if not columns and rowcount is not None:
+        return f"Query executed successfully. Rows affected: {rowcount}"
 
     if not rows:
         return "Query returned 0 rows."
@@ -168,8 +180,11 @@ async def explain_query(
     sql: Annotated[str, Field(description="SQL query to get the execution plan for")],
 ) -> str:
     """Show the PostgreSQL execution plan for a query (EXPLAIN)."""
-    if WRITE_PATTERN.search(sql):
-        return "Error: Only read-only queries (SELECT) are allowed."
+    if WRITE_PATTERN.search(sql) and _config.read_only:
+        return (
+            "Error: Cannot EXPLAIN write queries in read-only mode. "
+            "Set read_only: false in config to allow this."
+        )
 
     await _ensure_initialized()
     return await _db.execute_explain(sql)
