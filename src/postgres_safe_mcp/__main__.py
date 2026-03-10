@@ -15,8 +15,11 @@ def ensure_spacy_model() -> None:
         spacy.load("en_core_web_lg")
     except OSError:
         print("Downloading spaCy model en_core_web_lg (first run only)...", file=sys.stderr)
+        # Use uv pip instead of pip directly, since uv-managed venvs
+        # don't include pip by default
         subprocess.check_call(
-            [sys.executable, "-m", "spacy", "download", "en_core_web_lg"],
+            ["uv", "pip", "install", "en-core-web-lg",
+             "--find-links", "https://github.com/explosion/spacy-models/releases/expanded_assets/en_core_web_lg-3.8.0"],
             stdout=sys.stderr,
             stderr=sys.stderr,
         )
