@@ -2,7 +2,7 @@
 
 import re
 
-from postgres_safe_mcp.server import WRITE_PATTERN
+from postgres_safe_mcp.server import WRITE_PATTERN, _format_results
 
 
 class TestWritePatternDetection:
@@ -70,3 +70,63 @@ class TestWritePatternDetection:
         assert WRITE_PATTERN.search("SELECT updated_at FROM users") is None
         assert WRITE_PATTERN.search("SELECT created_at FROM users") is None
         assert WRITE_PATTERN.search("SELECT deleted FROM users") is None
+
+
+class TestResultFormatting:
+    def test_markdown_table_format(self):
+        result = _format_results(
+            columns=["id", "email"],
+            rows=[[1, "j***@e***.com"], [2, "j***@t***.org"]],
+            annotations={"email": "[MASKED: EMAIL_ADDRESS]"},
+            max_rows=1000,
+        )
+        assert "PII masked: email" in result
+        assert "2 rows" in result
+        assert "| id" in result
+        assert "| 1" in result
+        assert "j***@e***.com" in result
+
+    def test_tsv_for_wide_results(self):
+        """Results with >8 columns should use TSV format."""
+        cols = [f"col{i}" for i in range(10)]
+        rows = [[i for i in range(10)]]
+        result = _format_results(cols, rows, {}, max_rows=1000)
+        # TSV uses tabs, not pipes
+        assert "\t" in result
+        assert "|" not in result.split("\n")[-1]
+
+    def test_truncation_indicator(self):
+        result = _format_results(
+            columns=["id"],
+            rows=[[1], [2], [3]],
+            annotations={},
+            max_rows=3,
+        )
+        assert "truncated" in result
+
+    def test_no_truncation_indicator(self):
+        result = _format_results(
+            columns=["id"],
+            rows=[[1], [2]],
+            annotations={},
+            max_rows=1000,
+        )
+        assert "truncated" not in result
+
+    def test_null_values(self):
+        result = _format_results(
+            columns=["id", "name"],
+            rows=[[1, None]],
+            annotations={},
+            max_rows=1000,
+        )
+        assert "NULL" in result
+
+    def test_revealed_columns_shown(self):
+        result = _format_results(
+            columns=["email"],
+            rows=[["john@example.com"]],
+            annotations={"email": "[UNMASKED]"},
+            max_rows=1000,
+        )
+        assert "Revealed: email" in result

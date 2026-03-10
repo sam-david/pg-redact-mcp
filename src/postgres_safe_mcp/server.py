@@ -137,28 +137,86 @@ async def query(
         reveal_types=reveal_types,
     )
 
-    # Format output
-    result_dicts = [dict(zip(columns, row)) for row in redacted_rows]
-    output_parts = []
+    return _format_results(columns, redacted_rows, annotations, _config.max_rows)
 
-    # Add annotations header
+
+def _format_results(
+    columns: list[str],
+    rows: list[list],
+    annotations: dict[str, str],
+    max_rows: int,
+) -> str:
+    """Format query results for optimal AI consumption.
+
+    Uses markdown table for structured readability and token efficiency.
+    Falls back to TSV for very wide results (>8 columns).
+    """
+    output_parts: list[str] = []
+
+    # Metadata header
     masked_cols = {k: v for k, v in annotations.items() if "MASKED" in v}
     unmasked_cols = {k: v for k, v in annotations.items() if "UNMASKED" in v}
     if masked_cols:
         output_parts.append(
-            "PII masking applied: "
-            + ", ".join(f"{k} {v}" for k, v in masked_cols.items())
+            "PII masked: "
+            + ", ".join(f"{k} ({v.strip('[]')})" for k, v in masked_cols.items())
         )
     if unmasked_cols:
         output_parts.append(
-            "Revealed (unmasked): "
-            + ", ".join(f"{k}" for k in unmasked_cols)
+            "Revealed: " + ", ".join(unmasked_cols)
         )
 
-    output_parts.append(f"Rows: {len(result_dicts)}")
-    output_parts.append(json.dumps(result_dicts, indent=2, default=str))
+    truncated = len(rows) >= max_rows
+    row_label = f"{len(rows)} rows" + (" (truncated)" if truncated else "")
+    output_parts.append(row_label)
+    output_parts.append("")
+
+    # Format as markdown table (compact, easy for LLMs to parse)
+    # For very wide results, use TSV to avoid unwieldy tables
+    if len(columns) > 8:
+        output_parts.append(_format_tsv(columns, rows))
+    else:
+        output_parts.append(_format_markdown_table(columns, rows))
 
     return "\n".join(output_parts)
+
+
+def _format_markdown_table(columns: list[str], rows: list[list]) -> str:
+    """Format as a markdown table."""
+    str_rows = [[str(v) if v is not None else "NULL" for v in row] for row in rows]
+
+    # Calculate column widths for alignment
+    widths = [len(c) for c in columns]
+    for row in str_rows:
+        for i, val in enumerate(row):
+            if i < len(widths):
+                widths[i] = max(widths[i], min(len(val), 40))
+
+    # Header
+    header = "| " + " | ".join(c.ljust(widths[i]) for i, c in enumerate(columns)) + " |"
+    separator = "|-" + "-|-".join("-" * widths[i] for i in range(len(columns))) + "-|"
+
+    # Rows (truncate long values)
+    lines = [header, separator]
+    for row in str_rows:
+        cells = []
+        for i, val in enumerate(row):
+            if i < len(widths) and len(val) > 40:
+                val = val[:37] + "..."
+            cells.append(val.ljust(widths[i]) if i < len(widths) else val)
+        lines.append("| " + " | ".join(cells) + " |")
+
+    return "\n".join(lines)
+
+
+def _format_tsv(columns: list[str], rows: list[list]) -> str:
+    """Format as TSV for wide results — compact and parseable."""
+    lines = ["\t".join(columns)]
+    for row in rows:
+        lines.append("\t".join(
+            str(v)[:40] if v is not None else "NULL" for v in row
+        ))
+    return "\n".join(lines)
 
 
 @mcp_server.tool()
