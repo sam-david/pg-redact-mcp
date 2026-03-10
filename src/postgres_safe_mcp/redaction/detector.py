@@ -30,6 +30,10 @@ COLUMN_NAME_HINTS: dict[str, str] = {
     r"ssn|social_security|tax_?id|\bein\b|\bcpf\b": "US_SSN",
     # Names — with common prefixes
     r"(first|last|full|middle|maiden|former|spouse|pref)[_.]?name|nickname|holder_name|payer_name|paid_name": "PERSON",
+    # IP addresses (must come before general "address" pattern)
+    r"ip_?addr|remote_addr|sign_in_ip": "IP_ADDRESS",
+    # Geolocation
+    r"\blat\b|\blon\b|latitude|longitude": "LOCATION",
     # Addresses
     r"address|street|city\b|state\b|zip|postal|country\b": "LOCATION",
     # DOB
@@ -38,10 +42,6 @@ COLUMN_NAME_HINTS: dict[str, str] = {
     r"credit_?card|card_?number|\bpan\b": "CREDIT_CARD",
     # Financial
     r"routing_?number|bank_?account|account_?number": "FINANCIAL",
-    # IP addresses
-    r"ip_?addr|remote_addr|sign_in_ip": "IP_ADDRESS",
-    # Geolocation
-    r"\blat\b|\blon\b|latitude|longitude": "LOCATION",
     # Encrypted/secrets — always redact, never reveal
     r"encrypted_|otp_secret|reset_password_token|confirmation_token|unlock_token": "SECRET",
     # Government IDs
@@ -58,8 +58,17 @@ class PiiDetector:
     """Detects PII in database columns using heuristics and Presidio."""
 
     def __init__(self, analyzer: AnalyzerEngine | None = None) -> None:
-        self._analyzer = analyzer or AnalyzerEngine()
+        self._analyzer = analyzer
+        self._analyzer_initialized = analyzer is not None
         self._cache: dict[str, PiiColumnInfo | None] = {}
+
+    def _get_analyzer(self) -> AnalyzerEngine:
+        """Lazy-initialize the Presidio analyzer."""
+        if not self._analyzer_initialized:
+            self._analyzer = AnalyzerEngine()
+            self._analyzer_initialized = True
+        assert self._analyzer is not None
+        return self._analyzer
 
     def detect_column_pii(
         self,
@@ -86,8 +95,8 @@ class PiiDetector:
                     source="heuristic",
                 )
 
-        # Presidio analysis on sample values (slow path)
-        if sample_values:
+        # Presidio analysis on sample values (slow path, requires NLP model)
+        if sample_values and self._analyzer_initialized:
             return self._analyze_samples(sample_values)
 
         return None
@@ -100,7 +109,7 @@ class PiiDetector:
         for value in samples:
             if not value or not value.strip():
                 continue
-            results = self._analyzer.analyze(text=value, language="en")
+            results = self._get_analyzer().analyze(text=value, language="en")
             for result in results:
                 votes[result.entity_type] += 1
                 total_scores[result.entity_type] = (

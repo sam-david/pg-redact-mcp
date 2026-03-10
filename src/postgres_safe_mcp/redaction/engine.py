@@ -6,7 +6,7 @@ from typing import Any
 
 from presidio_analyzer import AnalyzerEngine
 from presidio_anonymizer import AnonymizerEngine
-from presidio_anonymizer.entities import OperatorConfig, RecognizerResult
+from presidio_anonymizer.entities import OperatorConfig
 
 from .detector import PiiDetector, PiiColumnInfo
 from .maskers import mask_value, ALL_CUSTOM_OPERATORS
@@ -26,11 +26,21 @@ class RedactionEngine:
         self._pseudo_seed = pseudo_seed
         # Style overrides per table.column
         self._style_overrides: dict[str, str] = {}
-        # Presidio anonymizer for free text columns
-        self._anonymizer = AnonymizerEngine()
-        for op_class in ALL_CUSTOM_OPERATORS:
-            self._anonymizer.add_anonymizer(op_class)
-        self._analyzer = AnalyzerEngine()
+        # Lazy-initialized for free text columns
+        self._anonymizer: AnonymizerEngine | None = None
+        self._analyzer: AnalyzerEngine | None = None
+
+    def _get_anonymizer(self) -> AnonymizerEngine:
+        if self._anonymizer is None:
+            self._anonymizer = AnonymizerEngine()
+            for op_class in ALL_CUSTOM_OPERATORS:
+                self._anonymizer.add_anonymizer(op_class)
+        return self._anonymizer
+
+    def _get_analyzer(self) -> AnalyzerEngine:
+        if self._analyzer is None:
+            self._analyzer = AnalyzerEngine()
+        return self._analyzer
 
     def set_column_style(
         self, table_key: str, column: str, masking_style: str
@@ -148,7 +158,7 @@ class RedactionEngine:
         if not text.strip():
             return value
 
-        results = self._analyzer.analyze(text=text, language="en")
+        results = self._get_analyzer().analyze(text=text, language="en")
         if not results:
             return value
 
@@ -165,7 +175,7 @@ class RedactionEngine:
                     r.entity_type, masking_style
                 )
 
-        anonymized = self._anonymizer.anonymize(
+        anonymized = self._get_anonymizer().anonymize(
             text=text,
             analyzer_results=results,
             operators=operators,
