@@ -5,23 +5,72 @@ A PostgreSQL MCP server that automatically detects and obfuscates PII in query r
 ## How it works
 
 1. **Connect** — Point the server at any PostgreSQL database (local or remote)
-2. **Auto-detect** — On first query, the server scans column names and samples data to classify which columns contain PII (emails, names, phones, SSNs, etc.)
-3. **Mask by default** — Query results are automatically masked before the AI sees them:
+2. **Schema check** — The agent calls `describe_schema` first to learn the actual table and column names, avoiding guesswork and failed queries
+3. **Auto-detect** — On startup, the server runs instant heuristic detection on all column names to classify PII (emails, names, phones, SSNs, etc.). No data sampling required — column name patterns catch the vast majority of PII fields
+4. **Mask by default** — Query results are automatically masked before the AI sees them:
    ```
-   SELECT * FROM users LIMIT 2;
+   PII masked: first_name (MASKED: PERSON), last_name (MASKED: PERSON), email (MASKED: EMAIL_ADDRESS)
+   3 rows
 
-   PII masking applied: email [MASKED: EMAIL_ADDRESS], first_name [MASKED: PERSON], phone [MASKED: PHONE_NUMBER]
-   Rows: 2
-   [
-     {"id": 1, "email": "j***@e***.com", "first_name": "J***", "phone": "***-***-4567"},
-     {"id": 2, "email": "j***@t***.org", "first_name": "J***", "phone": "***-***-8901"}
-   ]
+   | id   | first_name | last_name | email         | created_at |
+   |------|------------|-----------|---------------|------------|
+   | 5022 | S**        | D****     | s***@g***.com | 2026-03-06 |
+   | 5021 | S**        | D****     | s***@g***.com | 2026-03-03 |
+   | 5020 | l***       | c***      | l***@t***.com | 2026-02-24 |
    ```
-4. **Reveal when needed** — When the AI needs real data to solve a problem, it can request specific columns or PII types to be unmasked:
-   ```
-   query(sql="SELECT * FROM users", reveal_columns=["email"])
-   ```
-   The human approves each tool call in Claude Code, so you always see what's being revealed.
+5. **Reveal when needed** — The AI can selectively unmask specific columns or PII types when the user explicitly asks to see real data
+
+## Masking and unmasking
+
+### Default behavior: everything masked
+
+Every query runs through the redaction engine before results reach the AI. PII columns are detected by name pattern and masked automatically. The AI sees partial values like `J******` instead of `Jessica` — enough structure to reason about the data without exposing real PII.
+
+### How the AI decides what to reveal
+
+The `query` tool accepts two optional parameters for selective unmasking:
+
+- **`reveal_columns`** — Unmask specific columns by name (e.g. `["email", "first_name"]`)
+- **`reveal_types`** — Unmask all columns of a PII type (e.g. `["EMAIL_ADDRESS"]`)
+
+The AI is guided by these rules in the tool description:
+
+| Scenario | What the AI does |
+|---|---|
+| "Show me the last 5 registrations" | Keeps everything masked — browsing doesn't need real data |
+| "How many users signed up last month?" | Aggregate query, no PII in results |
+| "What is the email for registration 5015?" | Reveals `email` — user explicitly asked for it |
+| "Show me John's full name" | Reveals `first_name`, `last_name` — user asked to see the value |
+| "Are there duplicate registrations?" | Keeps masked — duplicates are detectable from masked patterns |
+
+### Secret columns can never be revealed
+
+Columns matching patterns like `encrypted_password`, `otp_secret_key`, `reset_password_token` are classified as `SECRET`. These are always fully redacted (`[REDACTED]`) and **cannot be unmasked** even if `reveal_columns` or `reveal_types` is used. There's no legitimate reason for an AI agent to see raw password hashes or auth tokens.
+
+### Manual overrides
+
+You can force specific masking behavior per column in your config:
+
+```yaml
+column_rules:
+  # Force a column to be treated as PII even if the name doesn't match patterns
+  - table: users
+    column: custom_id_field
+    pii_type: US_SSN
+    masking_style: partial
+
+  # Explicitly mark a column as NOT PII (skip masking)
+  - table: users
+    column: display_name    # public-facing, not sensitive
+    pii_type: none
+    masking_style: none
+```
+
+Or at runtime via the `configure_masking` tool (in-memory, not persisted).
+
+### Human in the loop
+
+In Claude Code, every tool call is shown to the user before execution. When the AI uses `reveal_columns`, you see exactly which columns are being unmasked and can approve or deny the request. This creates a natural checkpoint — the AI proposes what to reveal, you decide whether to allow it.
 
 ## PII detection
 

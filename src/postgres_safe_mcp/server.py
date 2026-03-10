@@ -249,10 +249,24 @@ async def describe_schema(
     """List database tables and columns with their types and PII detection status.
 
     Call this FIRST before writing any query to check actual column names.
-    Pass a table name to see its columns, or omit to list all tables.
-    This avoids wasted queries from guessing column names incorrectly.
+    Always pass a table name to see its columns — this is fast and returns
+    only the columns you need. Omitting the table name lists ALL tables
+    which can be very large; only do this if you need to search for a table.
     """
     await _ensure_initialized()
+
+    # When listing all tables without a filter, just show table names
+    # to avoid dumping thousands of columns
+    if table is None:
+        table_names = sorted(
+            f"{t.schema}.{t.name}" for t in _schema_mgr.tables.values()
+        )
+        return (
+            f"{len(table_names)} tables found. "
+            "Pass a table name to see its columns.\n\n"
+            + "\n".join(table_names)
+        )
+
     return _schema_mgr.format_schema(
         detector=_detector,
         default_masking_style=_config.default_masking_style,
