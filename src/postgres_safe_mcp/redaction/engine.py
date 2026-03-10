@@ -1,0 +1,204 @@
+"""Redaction engine — orchestrates PII detection and masking of query results."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from presidio_analyzer import AnalyzerEngine
+from presidio_anonymizer import AnonymizerEngine
+from presidio_anonymizer.entities import OperatorConfig, RecognizerResult
+
+from .detector import PiiDetector, PiiColumnInfo
+from .maskers import mask_value, ALL_CUSTOM_OPERATORS
+
+
+class RedactionEngine:
+    """Orchestrates PII detection and masking of query results."""
+
+    def __init__(
+        self,
+        detector: PiiDetector,
+        default_masking_style: str = "partial",
+        pseudo_seed: str = "postgres-safe-mcp",
+    ) -> None:
+        self._detector = detector
+        self._default_masking_style = default_masking_style
+        self._pseudo_seed = pseudo_seed
+        # Style overrides per table.column
+        self._style_overrides: dict[str, str] = {}
+        # Presidio anonymizer for free text columns
+        self._anonymizer = AnonymizerEngine()
+        for op_class in ALL_CUSTOM_OPERATORS:
+            self._anonymizer.add_anonymizer(op_class)
+        self._analyzer = AnalyzerEngine()
+
+    def set_column_style(
+        self, table_key: str, column: str, masking_style: str
+    ) -> None:
+        """Override the masking style for a specific column."""
+        self._style_overrides[f"{table_key}.{column}"] = masking_style
+
+    def get_masking_style(self, table_key: str, column: str) -> str:
+        """Get the effective masking style for a column."""
+        return self._style_overrides.get(
+            f"{table_key}.{column}", self._default_masking_style
+        )
+
+    def redact_results(
+        self,
+        columns: list[str],
+        rows: list[list[Any]],
+        table_hint: str | None = None,
+        reveal_columns: list[str] | None = None,
+        reveal_types: list[str] | None = None,
+    ) -> tuple[list[list[Any]], dict[str, str]]:
+        """Redact PII in query results.
+
+        Returns:
+            (redacted_rows, annotations) where annotations maps column names
+            to status strings like "[UNMASKED]" or "[MASKED: EMAIL_ADDRESS]".
+        """
+        reveal_columns = reveal_columns or []
+        reveal_types = reveal_types or []
+
+        # Build per-column redaction plan
+        column_plan: list[_ColumnPlan | None] = []
+        annotations: dict[str, str] = {}
+
+        for col in columns:
+            info = self._lookup_column(col, table_hint)
+            if info is None:
+                column_plan.append(None)
+                continue
+
+            # SECRET type can never be revealed
+            if info.entity_type == "SECRET":
+                style = "full"
+                column_plan.append(
+                    _ColumnPlan(info=info, style=style, revealed=False)
+                )
+                annotations[col] = "[MASKED: SECRET]"
+                continue
+
+            # Check if this column is revealed
+            revealed = col in reveal_columns or info.entity_type in reveal_types
+            if revealed:
+                column_plan.append(
+                    _ColumnPlan(info=info, style="none", revealed=True)
+                )
+                annotations[col] = "[UNMASKED]"
+                continue
+
+            # Normal masking
+            style = self.get_masking_style(
+                table_hint or "", col
+            )
+            column_plan.append(
+                _ColumnPlan(info=info, style=style, revealed=False)
+            )
+            annotations[col] = f"[MASKED: {info.entity_type}]"
+
+        # Apply masking
+        redacted = []
+        for row in rows:
+            new_row = []
+            for i, value in enumerate(row):
+                plan = column_plan[i] if i < len(column_plan) else None
+                if plan is None or plan.revealed or plan.style == "none":
+                    new_row.append(value)
+                elif plan.info.is_free_text:
+                    new_row.append(
+                        self._mask_free_text(value, reveal_types, plan.style)
+                    )
+                else:
+                    new_row.append(
+                        mask_value(
+                            value,
+                            plan.info.entity_type,
+                            plan.style,
+                            self._pseudo_seed,
+                        )
+                    )
+            redacted.append(new_row)
+
+        return redacted, annotations
+
+    def _lookup_column(
+        self, column: str, table_hint: str | None
+    ) -> PiiColumnInfo | None:
+        """Look up PII info for a column, trying table-qualified and bare names."""
+        if table_hint:
+            info = self._detector.get_cached_info(table_hint, column)
+            if info is not None:
+                return info
+        # Try bare column name detection (no samples available at query time)
+        return self._detector.detect_column_pii(column)
+
+    def _mask_free_text(
+        self,
+        value: Any,
+        reveal_types: list[str],
+        masking_style: str,
+    ) -> Any:
+        """Mask PII embedded in free text using Presidio value-level analysis."""
+        if value is None:
+            return None
+
+        text = str(value)
+        if not text.strip():
+            return value
+
+        results = self._analyzer.analyze(text=text, language="en")
+        if not results:
+            return value
+
+        # Filter out revealed types
+        results = [r for r in results if r.entity_type not in reveal_types]
+        if not results:
+            return value
+
+        # Build operator config based on masking style
+        operators: dict[str, OperatorConfig] = {}
+        for r in results:
+            if r.entity_type not in operators:
+                operators[r.entity_type] = _free_text_operator(
+                    r.entity_type, masking_style
+                )
+
+        anonymized = self._anonymizer.anonymize(
+            text=text,
+            analyzer_results=results,
+            operators=operators,
+        )
+        return anonymized.text
+
+
+class _ColumnPlan:
+    """Internal plan for how to handle a column during redaction."""
+
+    __slots__ = ("info", "style", "revealed")
+
+    def __init__(
+        self, info: PiiColumnInfo, style: str, revealed: bool
+    ) -> None:
+        self.info = info
+        self.style = style
+        self.revealed = revealed
+
+
+def _free_text_operator(entity_type: str, masking_style: str) -> OperatorConfig:
+    """Get operator config for masking PII found in free text."""
+    match masking_style:
+        case "full":
+            label = entity_type.replace("_", " ").upper()
+            return OperatorConfig("replace", {"new_value": f"[{label}]"})
+        case "pseudonymize":
+            return OperatorConfig(
+                "pseudonymize",
+                {"seed": "postgres-safe-mcp", "entity_type": entity_type},
+            )
+        case _:  # "partial"
+            # For free text, use replace with a hint since partial masking
+            # on inline text is harder to do cleanly
+            label = entity_type.replace("_", " ").upper()
+            return OperatorConfig("replace", {"new_value": f"[{label}]"})

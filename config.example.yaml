@@ -1,0 +1,18 @@
+connection_string: "postgresql://user:pass@localhost:5432/mydb"
+default_masking_style: "partial"    # partial | full | pseudonymize
+auto_detect: true
+sample_size: 100
+max_rows: 1000
+allowed_schemas:
+  - public
+
+# Manual column overrides (take precedence over auto-detection)
+column_rules:
+  - table: users
+    column: email
+    pii_type: EMAIL_ADDRESS
+    masking_style: partial
+  - table: users
+    column: internal_id
+    pii_type: none          # explicitly mark as NOT PII
+    masking_style: none
