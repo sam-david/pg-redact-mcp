@@ -100,6 +100,10 @@ async def query(
 ) -> str:
     """Execute a SQL query with automatic PII redaction.
 
+    IMPORTANT: Before writing a query, use describe_schema to check the
+    table's actual column names. Do NOT guess column names — schemas vary
+    widely and incorrect guesses waste round trips.
+
     IMPORTANT: All PII columns are masked by default. You should keep data
     masked unless the user's request CANNOT be answered without seeing the
     real values. Follow these guidelines:
@@ -242,7 +246,12 @@ async def describe_schema(
         bool, Field(description="Show PII detection status for each column")
     ] = True,
 ) -> str:
-    """List database tables and columns with their types and PII detection status."""
+    """List database tables and columns with their types and PII detection status.
+
+    Call this FIRST before writing any query to check actual column names.
+    Pass a table name to see its columns, or omit to list all tables.
+    This avoids wasted queries from guessing column names incorrectly.
+    """
     await _ensure_initialized()
     return _schema_mgr.format_schema(
         detector=_detector,
