@@ -198,29 +198,25 @@ def _format_results(
     return "\n".join(output_parts)
 
 
+MAX_CELL_LENGTH = 500
+
+
 def _format_markdown_table(columns: list[str], rows: list[list]) -> str:
     """Format as a markdown table."""
     str_rows = [[str(v) if v is not None else "NULL" for v in row] for row in rows]
 
-    # Calculate column widths for alignment
-    widths = [len(c) for c in columns]
-    for row in str_rows:
-        for i, val in enumerate(row):
-            if i < len(widths):
-                widths[i] = max(widths[i], min(len(val), 40))
-
     # Header
-    header = "| " + " | ".join(c.ljust(widths[i]) for i, c in enumerate(columns)) + " |"
-    separator = "|-" + "-|-".join("-" * widths[i] for i in range(len(columns))) + "-|"
+    header = "| " + " | ".join(columns) + " |"
+    separator = "| " + " | ".join("---" for _ in columns) + " |"
 
-    # Rows (truncate long values)
+    # Rows (only truncate very large values to protect context window)
     lines = [header, separator]
     for row in str_rows:
         cells = []
-        for i, val in enumerate(row):
-            if i < len(widths) and len(val) > 40:
-                val = val[:37] + "..."
-            cells.append(val.ljust(widths[i]) if i < len(widths) else val)
+        for val in row:
+            if len(val) > MAX_CELL_LENGTH:
+                val = val[:MAX_CELL_LENGTH] + "... (truncated)"
+            cells.append(val)
         lines.append("| " + " | ".join(cells) + " |")
 
     return "\n".join(lines)
@@ -230,9 +226,13 @@ def _format_tsv(columns: list[str], rows: list[list]) -> str:
     """Format as TSV for wide results — compact and parseable."""
     lines = ["\t".join(columns)]
     for row in rows:
-        lines.append("\t".join(
-            str(v)[:40] if v is not None else "NULL" for v in row
-        ))
+        cells = []
+        for v in row:
+            val = str(v) if v is not None else "NULL"
+            if len(val) > MAX_CELL_LENGTH:
+                val = val[:MAX_CELL_LENGTH] + "... (truncated)"
+            cells.append(val)
+        lines.append("\t".join(cells))
     return "\n".join(lines)
 
 

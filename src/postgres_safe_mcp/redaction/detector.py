@@ -50,7 +50,7 @@ COLUMN_NAME_HINTS: dict[str, str] = {
 
 # Columns that need value-level Presidio scanning (free text)
 FREE_TEXT_HINTS: list[str] = [
-    r"message|body|content|description|notes|comment|narrative|substitution|metadata",
+    r"message|body|content|description|notes|comment|narrative|substitution|metadata|changes",
 ]
 
 
