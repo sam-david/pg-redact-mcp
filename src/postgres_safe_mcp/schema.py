@@ -47,7 +47,16 @@ class SchemaManager:
         for table_key, table_info in self._tables.items():
             for col in table_info.columns:
                 cache_key = f"{table_key}.{col.column_name}"
-                if cache_key not in detector._cache:
+                if col.data_type in ("json", "jsonb"):
+                    # JSON columns always need traversal — mark them regardless
+                    # of column name, overriding any name-based classification.
+                    detector._cache[cache_key] = PiiColumnInfo(
+                        entity_type="JSON_CONTAINER",
+                        confidence=1.0,
+                        source="heuristic",
+                        is_json=True,
+                    )
+                elif cache_key not in detector._cache:
                     info = detector.detect_column_pii(col.column_name)
                     if info is not None:
                         detector._cache[cache_key] = info

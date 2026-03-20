@@ -21,6 +21,29 @@ WRITE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Extracts table names from FROM/JOIN clauses for table_hints resolution.
+# Skips subqueries (FROM followed by '(') and handles schema-qualified names.
+_FROM_TABLE_RE = re.compile(
+    r"\b(?:FROM|JOIN)\b\s+(?!\()"
+    r"([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)?)",
+    re.IGNORECASE,
+)
+
+
+def _extract_table_hints(sql: str) -> list[str]:
+    """Extract fully-qualified table keys from a SQL query's FROM/JOIN clauses.
+
+    Returns keys in the form 'schema.table' (defaulting to 'public' when no
+    schema is specified), preserving order of appearance for hint lookup.
+    """
+    seen: list[str] = []
+    for match in _FROM_TABLE_RE.finditer(sql):
+        name = match.group(1).lower()
+        key = name if "." in name else f"public.{name}"
+        if key not in seen:
+            seen.append(key)
+    return seen
+
 mcp_server = FastMCP("postgres-safe")
 
 # These get initialized by create_server()
@@ -150,6 +173,7 @@ async def query(
     redacted_rows, annotations = _engine.redact_results(
         columns=columns,
         rows=rows,
+        table_hints=_extract_table_hints(sql),
         reveal_columns=reveal_columns,
         reveal_types=reveal_types,
     )

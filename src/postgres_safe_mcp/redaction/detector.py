@@ -18,6 +18,7 @@ class PiiColumnInfo:
     confidence: float  # 0.0 - 1.0
     source: str  # "heuristic", "presidio", "manual"
     is_free_text: bool = False  # needs value-level scanning
+    is_json: bool = False  # JSON/JSONB column — recurse into structure
 
 
 # Column name patterns → PII entity type (substring matching)
@@ -172,6 +173,17 @@ class PiiDetector:
                 confidence=1.0,
                 source="manual",
             )
+
+    def classify_json_key(self, key_name: str) -> str | None:
+        """Classify a JSON object key using column name heuristics.
+
+        Like detect_column_pii but: no caching, no free-text check, no sampling.
+        Used for fast key-name matching inside JSON blobs.
+        """
+        for pattern, entity_type in COLUMN_NAME_HINTS.items():
+            if re.search(pattern, key_name, re.IGNORECASE):
+                return entity_type
+        return None
 
     def get_cached_info(self, table_key: str, column: str) -> PiiColumnInfo | None:
         """Look up cached PII info for a column."""
