@@ -2,7 +2,7 @@
 
 import re
 
-from postgres_safe_mcp.server import WRITE_PATTERN, _format_results
+from postgres_safe_mcp.server import WRITE_PATTERN, _extract_table_hints, _format_results
 
 
 class TestWritePatternDetection:
@@ -130,3 +130,57 @@ class TestResultFormatting:
             max_rows=1000,
         )
         assert "Revealed: email" in result
+
+
+class TestExtractTableHints:
+    def test_simple_select(self):
+        hints = _extract_table_hints("SELECT * FROM users")
+        assert hints == ["public.users"]
+
+    def test_schema_qualified(self):
+        hints = _extract_table_hints("SELECT * FROM public.users")
+        assert hints == ["public.users"]
+
+    def test_join(self):
+        hints = _extract_table_hints(
+            "SELECT u.id, o.data FROM users u JOIN orders o ON u.id = o.user_id"
+        )
+        assert hints == ["public.users", "public.orders"]
+
+    def test_left_join(self):
+        hints = _extract_table_hints(
+            "SELECT * FROM users LEFT JOIN profiles ON users.id = profiles.user_id"
+        )
+        assert hints == ["public.users", "public.profiles"]
+
+    def test_multiple_joins(self):
+        hints = _extract_table_hints(
+            "SELECT * FROM users JOIN orders ON users.id = orders.user_id "
+            "JOIN payments ON orders.id = payments.order_id"
+        )
+        assert hints == ["public.users", "public.orders", "public.payments"]
+
+    def test_subquery_skipped(self):
+        hints = _extract_table_hints(
+            "SELECT * FROM (SELECT id FROM users) sub"
+        )
+        # The subquery is skipped; the inner FROM still matches
+        assert "public.users" in hints
+
+    def test_case_insensitive(self):
+        hints = _extract_table_hints("select * from Users")
+        assert hints == ["public.users"]
+
+    def test_deduplicates(self):
+        hints = _extract_table_hints(
+            "SELECT * FROM users JOIN users ON users.id = users.manager_id"
+        )
+        assert hints == ["public.users"]
+
+    def test_empty_sql(self):
+        assert _extract_table_hints("SELECT 1") == []
+
+    def test_preserves_order(self):
+        hints = _extract_table_hints("SELECT * FROM orders JOIN users ON orders.user_id = users.id")
+        assert hints[0] == "public.orders"
+        assert hints[1] == "public.users"
